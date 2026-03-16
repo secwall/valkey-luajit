@@ -128,6 +128,7 @@ set(MODULE_SRCS
     src/lua_cmsgpack.c
     src/strbuf.c
     src/fpconv.c
+    src/fpconv_dtoa.c
 )
 
 add_library(valkeyluajit SHARED ${MODULE_SRCS})

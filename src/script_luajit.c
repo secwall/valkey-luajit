@@ -9,6 +9,7 @@
  * but using LuaJIT instead.
  */
 
+#include "fpconv_dtoa.h"
 #include "valkeymodule.h"
 #include "script_luajit.h"
 #include "engine_structs.h"
@@ -803,7 +804,8 @@ static ValkeyModuleString **luajitArgsToServerArgv(ValkeyModuleCtx *ctx, lua_Sta
             if (double2ll((double)num, &lvalue)) {
                 obj_len = ll2string(dbuf, sizeof(dbuf), lvalue);
             } else {
-                obj_len = snprintf(dbuf, sizeof(dbuf), "%.17g", (double)num);
+                obj_len = fpconv_dtoa((double)num, dbuf);
+                dbuf[obj_len] = '\0';
             }
             obj_s = dbuf;
         } else {
