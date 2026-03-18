@@ -1,0 +1,41 @@
+start_server {tags {"scripting-isolation"}} {
+    test {Users are created with scripting permissions} {
+        r ACL SETUSER user1 on >pass1 +@scripting ~*
+        r ACL SETUSER user2 on >pass2 +@scripting ~*
+    }
+
+    set u1 [valkey [srv "host"] [srv "port"] 0 $::tls]
+    set u2 [valkey [srv "host"] [srv "port"] 0 $::tls]
+
+    $u1 AUTH user1 pass1
+    $u2 AUTH user2 pass2
+
+    test {Global variable set by user1 is not visible to user2} {
+        $u1 EVAL "foo = 'bar'; return 'set'" 0
+
+        assert_equal [$u1 EVAL "return foo" 0] {bar}
+
+        assert_equal [$u2 EVAL "return foo" 0] {}
+    }
+
+    test {Global variable set by user2 is not visible to user1} {
+        $u2 EVAL "baz = 'test'; return 'set'" 0
+
+        assert_equal [$u2 EVAL "return baz" 0] {test}
+
+        assert_equal [$u1 EVAL "return baz" 0] {}
+    }
+
+    test {Both users have independent global state} {
+        $u1 EVAL "foo = 'updated'; return 'set'" 0
+        $u2 EVAL "foo = 'different'; return 'set'" 0
+
+        assert_equal [$u1 EVAL "return foo" 0] {updated}
+
+        assert_equal [$u2 EVAL "return foo" 0] {different}
+    }
+
+    $u1 close
+    $u2 close
+    r ACL DELUSER user1 user2
+}
