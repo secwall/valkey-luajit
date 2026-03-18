@@ -35,4 +35,37 @@ start_server {tags {"scripting-ffi"} overrides {luajit.enable-ffi-api yes}} {
             return {read_val, write_val}
         " 0
     } {1 2}
+
+    test {FFI - random_key returns Lua string} {
+        r set "key1" "value1"
+        r set "key2" "value2"
+        r eval "
+            local ctx = VKM.ctx()
+            local key = VKM.random_key(ctx)
+            return type(key)
+        " 0
+    } {string}
+    r del "key1" "key2"
+
+    test {FFI - random_key returns nil for empty DB} {
+        r eval "
+            local ctx = VKM.ctx()
+            local key = VKM.random_key(ctx)
+            if key == nil then
+                return 'nil'
+            else
+                return type(key)
+            end
+        " 0
+    } {nil}
+
+    test {FFI - random_key returns valid key from DB} {
+        r set "testkey" "testvalue"
+        r eval "
+            local ctx = VKM.ctx()
+            local key = VKM.random_key(ctx)
+            return key
+        " 0
+    } {testkey}
+    r del "testkey"
 }

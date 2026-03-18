@@ -272,7 +272,19 @@ function VKM.db_size(ctx)
 end
 
 function VKM.random_key(ctx)
-    return C.ValkeyModule_RandomKey(ctx)
+    local rms = C.ValkeyModule_RandomKey(ctx)
+    if rms == nil then
+        return nil
+    end
+
+    local ptr = C.ValkeyModule_StringPtrLen(rms, _len)
+    if ptr == nil then
+        return nil
+    end
+
+    local result = ffi.string(ptr, _len[0])
+    C.ValkeyModule_FreeString(ctx, rms)
+    return result
 end
 
 function VKM.reset_dataset(restart_aof, async)
