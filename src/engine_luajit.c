@@ -36,8 +36,11 @@
 extern int luaopen_ffi(lua_State *L);
 extern int luaopen_jit(lua_State *L);
 
-#define LUA_ENGINE_NAME "LUA"
+#define DEFAULT_ENGINE_NAME "LUA"
 #define REGISTRY_FUNC_CACHE_NAME "__func_cache"
+
+static ValkeyModuleString *engine_name_str = NULL;
+static const char *engine_name_cstr = NULL;
 
 static int luajitFFIGetCurrentContext(lua_State *lua) {
     lua_getfield(lua, LUA_REGISTRYINDEX, "__ffi_ctx");
@@ -862,6 +865,23 @@ static int ffiSetConfig(const char *name, int val, void *privdata, ValkeyModuleS
     return VALKEYMODULE_OK;
 }
 
+static ValkeyModuleString *engineNameGet(const char *name, void *privdata) {
+    VALKEYMODULE_NOT_USED(name);
+    VALKEYMODULE_NOT_USED(privdata);
+    return engine_name_str;
+}
+
+static int engineNameSet(const char *name, ValkeyModuleString *val, void *privdata, ValkeyModuleString **err) {
+    VALKEYMODULE_NOT_USED(name);
+    VALKEYMODULE_NOT_USED(privdata);
+    VALKEYMODULE_NOT_USED(err);
+    if (engine_name_str) ValkeyModule_FreeString(NULL, engine_name_str);
+    ValkeyModule_RetainString(NULL, val);
+    engine_name_str = val;
+    engine_name_cstr = ValkeyModule_StringPtrLen(val, NULL);
+    return VALKEYMODULE_OK;
+}
+
 static luajitEngineCtx *engine_ctx = NULL;
 
 int ValkeyModule_OnLoad(ValkeyModuleCtx *ctx,
@@ -889,7 +909,24 @@ int ValkeyModule_OnLoad(ValkeyModuleCtx *ctx,
         return VALKEYMODULE_ERR;
     }
 
+    if (ValkeyModule_RegisterStringConfig(ctx,
+                                          "engine-name",
+                                          DEFAULT_ENGINE_NAME,
+                                          VALKEYMODULE_CONFIG_IMMUTABLE,
+                                          engineNameGet,
+                                          engineNameSet,
+                                          NULL,
+                                          NULL) == VALKEYMODULE_ERR) {
+        ValkeyModule_Log(ctx, "warning", "Failed to register engine-name config");
+        return VALKEYMODULE_ERR;
+    }
+
     engine_ctx = createEngineContext(ctx);
+
+    if (!engine_name_str) {
+        engine_name_str = ValkeyModule_CreateString(NULL, DEFAULT_ENGINE_NAME, strlen(DEFAULT_ENGINE_NAME));
+        engine_name_cstr = ValkeyModule_StringPtrLen(engine_name_str, NULL);
+    }
 
     if (ValkeyModule_LoadConfigs(ctx) == VALKEYMODULE_ERR) {
         ValkeyModule_Log(ctx, "warning", "Failed to load LuaJIT module configs");
@@ -920,12 +957,12 @@ int ValkeyModule_OnLoad(ValkeyModuleCtx *ctx,
     };
 
     int result = ValkeyModule_RegisterScriptingEngine(ctx,
-                                                      LUA_ENGINE_NAME,
+                                                      engine_name_cstr,
                                                       engine_ctx,
                                                       &methods);
 
     if (result == VALKEYMODULE_ERR) {
-        ValkeyModule_Log(ctx, "warning", "Failed to register LUA scripting engine");
+        ValkeyModule_Log(ctx, "warning", "Failed to register '%s' scripting engine", engine_name_cstr);
         destroyEngineContext(engine_ctx);
         engine_ctx = NULL;
         return VALKEYMODULE_ERR;
@@ -935,19 +972,25 @@ int ValkeyModule_OnLoad(ValkeyModuleCtx *ctx,
 
     ValkeyModule_Log(ctx, "notice",
                      "LuaJIT scripting engine registered as '%s' (per-user isolation)",
-                     LUA_ENGINE_NAME);
+                     engine_name_cstr);
 
     return VALKEYMODULE_OK;
 }
 
 int ValkeyModule_OnUnload(ValkeyModuleCtx *ctx) {
-    if (ValkeyModule_UnregisterScriptingEngine(ctx, LUA_ENGINE_NAME) != VALKEYMODULE_OK) {
+    if (ValkeyModule_UnregisterScriptingEngine(ctx, engine_name_cstr) != VALKEYMODULE_OK) {
         ValkeyModule_Log(ctx, "error", "Failed to unregister LuaJIT engine");
         return VALKEYMODULE_ERR;
     }
 
     destroyEngineContext(engine_ctx);
     engine_ctx = NULL;
+
+    if (engine_name_str) {
+        ValkeyModule_FreeString(NULL, engine_name_str);
+        engine_name_str = NULL;
+        engine_name_cstr = NULL;
+    }
 
     ValkeyModule_Log(ctx, "notice", "LuaJIT scripting engine unloaded");
 
