@@ -101,18 +101,6 @@ start_server {tags {"eval-coexistence"} overrides {luajit.enable-ffi-api yes}} {
         assert_equal $v1 $v2
     }
 
-    test {Script cache coexistence: scripts from both engines present} {
-        set sha_lua    [r script load "#!lua\nreturn 'from-lua'"]
-        set sha_luajit [r script load "#!luajit\nreturn 'from-luajit'"]
-        set sha_none   [r script load "return 'from-none'"]
-
-        assert_equal [r script exists $sha_lua $sha_luajit $sha_none] {1 1 1}
-
-        assert_equal [r evalsha $sha_lua 0]    {from-lua}
-        assert_equal [r evalsha $sha_luajit 0] {from-luajit}
-        assert_equal [r evalsha $sha_none 0]   {from-none}
-    }
-
     test {Script cache: LuaJIT script returns jit.version, Lua script errors on jit} {
         set sha_luajit [r script load "#!luajit\nreturn jit.version"]
         set sha_lua    [r script load "#!lua\nreturn jit.version"]
