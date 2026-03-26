@@ -12,28 +12,28 @@ start_server {tags {"eval-coexistence"} overrides {luajit.enable-ffi-api yes}} {
         assert_match {Lua 5.*} $v
     }
 
-    test {#!lua shebang routes to built-in Lua} {
+    test {lua shebang routes to built-in Lua} {
         catch {r eval "#!lua\nreturn jit.version" 0} err
         assert_match {*nonexistent global variable*} $err
     }
 
-    test {#!lua shebang: server.call works in built-in Lua} {
+    test {lua shebang: server.call works in built-in Lua} {
         r set coex_probe_key coex_probe_val
         set v [r eval "#!lua\nreturn server.call('get', KEYS\[1\])" 1 coex_probe_key]
         assert_equal $v {coex_probe_val}
     }
 
-    test {#!luajit shebang routes to LuaJIT} {
+    test {luajit shebang routes to LuaJIT} {
         set v [r eval "#!luajit\nreturn jit.version" 0]
         assert_match {LuaJIT*} $v
     }
 
-    test {#!LUAJIT (uppercase) routes to LuaJIT} {
+    test {LUAJIT (uppercase) routes to LuaJIT} {
         set v [r eval "#!LUAJIT\nreturn jit.version" 0]
         assert_match {LuaJIT*} $v
     }
 
-    test {#!LUA (uppercase) routes to built-in Lua} {
+    test {LUA (uppercase) routes to built-in Lua} {
         catch {r eval "#!LUA\nreturn jit.version" 0} err
         assert_match {*nonexistent global variable*} $err
     }
@@ -49,23 +49,23 @@ start_server {tags {"eval-coexistence"} overrides {luajit.enable-ffi-api yes}} {
         assert_match {*nonexistent global variable*} $err
     }
 
-    test {SCRIPT LOAD #!lua registers with built-in Lua engine} {
+    test {SCRIPT LOAD lua registers with built-in Lua engine} {
         set sha [r script load "#!lua\nreturn 'lua-loaded'"]
         assert_equal [r evalsha $sha 0] {lua-loaded}
     }
 
-    test {EVALSHA of #!lua script executes in built-in Lua} {
+    test {EVALSHA of lua script executes in built-in Lua} {
         set sha [r script load "#!lua\nreturn jit.version"]
         catch {r evalsha $sha 0} err
         assert_match {*nonexistent global variable*} $err
     }
 
-    test {SCRIPT LOAD #!luajit registers with LuaJIT engine} {
+    test {SCRIPT LOAD luajit registers with LuaJIT engine} {
         set sha [r script load "#!luajit\nreturn 'luajit-loaded'"]
         assert_equal [r evalsha $sha 0] {luajit-loaded}
     }
 
-    test {EVALSHA of #!luajit script executes in LuaJIT: jit.version set} {
+    test {EVALSHA of luajit script executes in LuaJIT: jit.version set} {
         set sha [r script load "#!luajit\nreturn jit.version"]
         set v [r evalsha $sha 0]
         assert_match {LuaJIT*} $v
@@ -112,20 +112,20 @@ start_server {tags {"eval-coexistence"} overrides {luajit.enable-ffi-api yes}} {
         assert_match {*nonexistent global variable*} $err
     }
 
-    test {EVAL #!luajit: server.call SET and GET work} {
+    test {EVAL luajit: server.call SET and GET work} {
         r eval "#!luajit\nserver.call('set', KEYS\[1\], ARGV\[1\])\nreturn server.call('get', KEYS\[1\])" 1 coex_luajit_key coex_luajit_val
     } {coex_luajit_val}
 
-    test {SCRIPT LOAD #!luajit then EVALSHA: server.call works} {
+    test {SCRIPT LOAD luajit then EVALSHA: server.call works} {
         set sha [r script load "#!luajit\nserver.call('set', KEYS\[1\], ARGV\[1\])\nreturn server.call('get', KEYS\[1\])"]
         r evalsha $sha 1 coex_luajit_key2 coex_luajit_val2
     } {coex_luajit_val2}
 
-    test {EVAL #!lua: server.call SET and GET work} {
+    test {EVAL lua: server.call SET and GET work} {
         r eval "#!lua\nserver.call('set', KEYS\[1\], ARGV\[1\])\nreturn server.call('get', KEYS\[1\])" 1 coex_lua_key coex_lua_val
     } {coex_lua_val}
 
-    test {SCRIPT LOAD #!lua then EVALSHA: server.call works} {
+    test {SCRIPT LOAD lua then EVALSHA: server.call works} {
         set sha [r script load "#!lua\nserver.call('set', KEYS\[1\], ARGV\[1\])\nreturn server.call('get', KEYS\[1\])"]
         r evalsha $sha 1 coex_lua_key2 coex_lua_val2
     } {coex_lua_val2}
