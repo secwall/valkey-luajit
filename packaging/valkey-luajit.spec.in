@@ -1,0 +1,45 @@
+%global upstream_version #[VERSION]
+%global valkey_modules_dir %{_libdir}/valkey/modules
+%global debug_package %{nil}
+
+Name:           #[PKG_NAME]
+Version:        #[RPM_VERSION]
+Release:        1%{dist}
+Summary:        LuaJIT scripting engine module for Valkey
+
+License:        BSD-3-Clause
+
+URL:            https://github.com/valkey-io/valkey-luajit
+Source:         valkey-luajit-%{upstream_version}.tar.gz
+
+BuildRequires:  gcc
+BuildRequires:  cmake >= 3.13
+BuildRequires:  make
+
+Recommends:     valkey >= 9.1
+
+%global _description %{expand:
+A LuaJIT scripting engine module for Valkey that replaces the built-in
+Lua 5.1 interpreter with LuaJIT v2.1, providing JIT compilation and
+optional FFI support.}
+
+%description %{_description}
+
+%prep
+%autosetup -n valkey-luajit-%{upstream_version} -p1
+
+%build
+mkdir -p build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+%make_build
+
+%install
+install -pDm755 build/libvalkeyluajit.so -t %{buildroot}%{valkey_modules_dir}
+
+%files
+%{valkey_modules_dir}/libvalkeyluajit.so
+%license LICENSE
+%doc README.md
+
+%changelog
