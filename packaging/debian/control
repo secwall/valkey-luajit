@@ -13,7 +13,7 @@ Rules-Requires-Root: no
 Package: valkey-luajit
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
-Recommends: valkey-server (>= 8.1) | valkey (>= 8.1)
+Recommends: valkey-server (>= 9.1) | valkey (>= 9.1)
 Description: LuaJIT scripting engine module for Valkey
  A LuaJIT scripting engine module for Valkey that replaces the built-in
  Lua 5.1 interpreter with LuaJIT v2.1, providing JIT compilation and

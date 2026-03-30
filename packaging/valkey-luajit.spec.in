@@ -16,7 +16,7 @@ BuildRequires:  gcc
 BuildRequires:  cmake >= 3.13
 BuildRequires:  make
 
-Recommends:     valkey >= 8.1
+Recommends:     valkey >= 9.1
 
 %global _description %{expand:
 A LuaJIT scripting engine module for Valkey that replaces the built-in
