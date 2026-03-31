@@ -98,7 +98,7 @@ jobs:
           tar czf "${SRCDIR}.tar.gz" "${SRCDIR}"
 
       - name: Upload source tarball
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: source-tarball
           path: /tmp/valkey-luajit-${{ env.MODULE_VERSION }}.tar.gz
@@ -145,7 +145,7 @@ jobs:
             bash /scripts/build-container-rpm.sh
 
       - name: Upload RPM artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: rpm-${{ matrix.platform_id }}-${{ matrix.arch }}
           path: ./output/*.rpm
@@ -190,7 +190,7 @@ jobs:
             bash /scripts/build-container-deb.sh
 
       - name: Upload DEB artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: deb-${{ matrix.platform_id }}-${{ matrix.arch }}
           path: ./output/valkey-luajit_*
