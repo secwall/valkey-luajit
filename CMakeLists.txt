@@ -30,10 +30,11 @@ else()
 endif()
 
 # Build LuaJIT using its Makefile
-set(LUAJIT_MAKE_FLAGS "")
+set(LUAJIT_XCFLAGS "-DLUAJIT_ENABLE_CHECKHOOK")
 if(LUAJIT_ENABLE_GC64)
-    set(LUAJIT_MAKE_FLAGS "XCFLAGS=-DLUAJIT_ENABLE_GC64")
+    set(LUAJIT_XCFLAGS "${LUAJIT_XCFLAGS} -DLUAJIT_ENABLE_GC64")
 endif()
+set(LUAJIT_MAKE_FLAGS "XCFLAGS=${LUAJIT_XCFLAGS}")
 
 # Use -fPIC so the static lib can be linked into a shared library
 set(LUAJIT_CFLAGS "-fPIC")

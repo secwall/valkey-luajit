@@ -25,6 +25,7 @@
 #include <lualib.h>
 #include <string.h>
 #include <errno.h>
+#include <stdlib.h>
 
 #include "engine_structs.h"
 #include "function_luajit.h"
@@ -43,6 +44,9 @@ extern int luaopen_jit(lua_State *L);
 static ValkeyModuleString *engine_names[MAX_ENGINE_NAMES] = {NULL};
 static const char *engine_names_cstr[MAX_ENGINE_NAMES] = {NULL};
 static int engine_names_count = 0;
+static int config_events_subscribed = 0;
+
+static void refreshBusyReplyThreshold(ValkeyModuleCtx *module_ctx);
 
 static int luajitFFIGetCurrentContext(lua_State *lua) {
     lua_getfield(lua, LUA_REGISTRYINDEX, "__ffi_ctx");
@@ -163,10 +167,6 @@ static void luajitLoadFFI(lua_State *lua) {
     }
     lua_pop(lua, 1);
 
-    lua_pushcfunction(lua, luaopen_jit);
-    lua_pushstring(lua, "jit");
-    lua_call(lua, 1, 0);
-
     lua_pushcfunction(lua, luajitFFIGetCurrentContext);
     lua_setglobal(lua, "__vkm_get_ctx");
 
@@ -202,6 +202,17 @@ static void luajitLoadFFI(lua_State *lua) {
     lua_setglobal(lua, "__vkm_module_path");
 }
 
+static void luajitEnableJIT(lua_State *lua, int expose_jit_table) {
+    lua_pushcfunction(lua, luaopen_jit);
+    lua_pushstring(lua, "jit");
+    lua_call(lua, 1, 0);
+
+    if (!expose_jit_table) {
+        lua_pushnil(lua);
+        lua_setglobal(lua, "jit");
+    }
+}
+
 static lua_State *createUserLuaState(luajitEngineCtx *engine_ctx,
                                      ValkeyModuleScriptingEngineSubsystemType type) {
     lua_State *lua = luaL_newstate();
@@ -212,6 +223,8 @@ static lua_State *createUserLuaState(luajitEngineCtx *engine_ctx,
     if (type == VMSE_EVAL) {
         initializeEvalExtras(lua);
     }
+
+    luajitEnableJIT(lua, engine_ctx->enable_ffi_api);
 
     if (engine_ctx->enable_ffi_api) {
         luajitLoadFFI(lua);
@@ -592,6 +605,8 @@ static void luajitEngineFunctionCall(
         lua_setfield(lua, LUA_REGISTRYINDEX, "__ffi_ctx");
     }
 
+    if (!config_events_subscribed) refreshBusyReplyThreshold(module_ctx);
+
     luajitCallFunction(module_ctx,
                        server_ctx,
                        type,
@@ -712,6 +727,41 @@ static int isLuaInsecureAPIEnabled(ValkeyModuleCtx *module_ctx) {
     return result;
 }
 
+static void refreshBusyReplyThreshold(ValkeyModuleCtx *module_ctx) {
+    long long busy_ms = 0;
+    ValkeyModuleCallReply *reply =
+        ValkeyModule_Call(module_ctx, "CONFIG", "ccE", "GET", "busy-reply-threshold");
+    if (reply != NULL) {
+        if (ValkeyModule_CallReplyType(reply) == VALKEYMODULE_REPLY_ARRAY &&
+            ValkeyModule_CallReplyLength(reply) == 2) {
+            ValkeyModuleCallReply *val = ValkeyModule_CallReplyArrayElement(reply, 1);
+            if (ValkeyModule_CallReplyType(val) == VALKEYMODULE_REPLY_STRING) {
+                ValkeyModuleString *value = ValkeyModule_CreateStringFromCallReply(val);
+                if (value != NULL) {
+                    if (ValkeyModule_StringToLongLong(value, &busy_ms) != VALKEYMODULE_OK || busy_ms < 0)
+                        busy_ms = 0;
+                    ValkeyModule_FreeString(module_ctx, value);
+                }
+            }
+        }
+        ValkeyModule_FreeCallReply(reply);
+    }
+    luajitWatchdogSetBusyThreshold(busy_ms);
+}
+
+static void luajitConfigChanged(ValkeyModuleCtx *ctx, ValkeyModuleEvent event, uint64_t subevent, void *data) {
+    VALKEYMODULE_NOT_USED(event);
+    if (subevent != VALKEYMODULE_SUBEVENT_CONFIG_CHANGE) return;
+    ValkeyModuleConfigChange *change = data;
+    for (uint32_t i = 0; i < change->num_changes; i++) {
+        if (strcmp(change->config_names[i], "busy-reply-threshold") == 0 ||
+            strcmp(change->config_names[i], "lua-time-limit") == 0) {
+            refreshBusyReplyThreshold(ctx);
+            break;
+        }
+    }
+}
+
 static ValkeyModuleScriptingEngineCallableLazyEnvReset *luajitEngineResetEnv(
     ValkeyModuleCtx *module_ctx,
     ValkeyModuleScriptingEngineCtx *engine_ctx_opaque,
@@ -803,6 +853,7 @@ static ValkeyModuleScriptingEngineCallableLazyEnvReset *luajitEngineResetEnv(
     }
 
     ctx->lua_enable_insecure_api = isLuaInsecureAPIEnabled(module_ctx);
+    refreshBusyReplyThreshold(module_ctx);
 
     return callback;
 }
@@ -1012,6 +1063,16 @@ int ValkeyModule_OnLoad(ValkeyModuleCtx *ctx,
     }
 
     engine_ctx->lua_enable_insecure_api = isLuaInsecureAPIEnabled(ctx);
+    config_events_subscribed = ValkeyModule_SubscribeToServerEvent != NULL &&
+                               ValkeyModule_SubscribeToServerEvent(ctx, ValkeyModuleEvent_Config,
+                                                                   luajitConfigChanged) == VALKEYMODULE_OK;
+    if (!config_events_subscribed) {
+        ValkeyModule_Log(ctx, "warning",
+                         "LuaJIT: config events unavailable; refreshing the script-kill "
+                         "threshold before every invocation");
+    }
+    refreshBusyReplyThreshold(ctx);
+    luajitWatchdogStart();
 
     if (engine_names_count == 1) {
         ValkeyModule_Log(ctx, "notice",
@@ -1029,6 +1090,11 @@ int ValkeyModule_OnLoad(ValkeyModuleCtx *ctx,
 }
 
 int ValkeyModule_OnUnload(ValkeyModuleCtx *ctx) {
+    if (config_events_subscribed) {
+        ValkeyModule_SubscribeToServerEvent(ctx, ValkeyModuleEvent_Config, NULL);
+        config_events_subscribed = 0;
+    }
+    luajitWatchdogStop();
     for (int i = 0; i < engine_names_count; i++) {
         if (ValkeyModule_UnregisterScriptingEngine(ctx, engine_names_cstr[i]) != VALKEYMODULE_OK) {
             ValkeyModule_Log(ctx, "error", "Failed to unregister LuaJIT engine '%s'", engine_names_cstr[i]);

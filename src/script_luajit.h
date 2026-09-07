@@ -66,6 +66,10 @@ void luajitErrorInformationDiscard(errorInfo *err_info);
 
 unsigned long luajitMemory(lua_State *lua);
 
+void luajitWatchdogStart(void);
+void luajitWatchdogStop(void);
+void luajitWatchdogSetBusyThreshold(long long ms);
+
 int luajitCompileLibraryInUserState(lua_State *lua,
                                     const char *code,
                                     size_t code_len,
