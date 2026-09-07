@@ -15,9 +15,14 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Module version (leave empty to use VERSION file)'
+        description: 'Module version (required when publishing; otherwise defaults to VERSION file)'
         required: false
         type: string
+      publish:
+        description: 'Build the version tag and publish packages to its GitHub Release'
+        required: false
+        type: boolean
+        default: false
   pull_request:
     paths:
       - 'packaging/**'
@@ -36,6 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.value }}
+      source_sha: ${{ steps.version.outputs.source_sha }}
       pkg_name: ${{ steps.version.outputs.pkg_name }}
       rpm-matrix: ${{ steps.matrix.outputs.rpm }}
       deb-matrix: ${{ steps.matrix.outputs.deb }}
@@ -43,11 +49,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Determine version
+      - name: Determine version and source commit
         id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          PUBLISH: ${{ inputs.publish }}
         run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            VERSION="${{ inputs.version }}"
+          if [ "$PUBLISH" = true ] && [ -z "$INPUT_VERSION" ]; then
+            echo "An explicit version is required when publishing." >&2
+            exit 1
+          fi
+
+          if [ -n "$INPUT_VERSION" ]; then
+            VERSION="$INPUT_VERSION"
           else
             VERSION=$(cat VERSION)
             if [[ "$VERSION" = *-dev ]]; then
@@ -55,7 +69,20 @@ jobs:
               VERSION="${VERSION}+${GIT_SHA}"
             fi
           fi
+
+          SOURCE_SHA=$(git rev-parse HEAD)
+          if [ "$PUBLISH" = true ]; then
+            git check-ref-format "refs/tags/${VERSION}"
+            git fetch --no-tags --depth=1 origin "refs/tags/${VERSION}"
+            SOURCE_SHA=$(git rev-parse 'FETCH_HEAD^{commit}')
+            TAG_VERSION=$(git show "${SOURCE_SHA}:VERSION")
+            if [ "$TAG_VERSION" != "$VERSION" ]; then
+              echo "Tag ${VERSION} has VERSION=${TAG_VERSION}; refusing to publish." >&2
+              exit 1
+            fi
+          fi
           echo "value=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "source_sha=${SOURCE_SHA}" >> "$GITHUB_OUTPUT"
 
           if [[ "$VERSION" = *-dev* ]]; then
             echo "pkg_name=valkey-luajit-nightly" >> "$GITHUB_OUTPUT"
@@ -63,6 +90,7 @@ jobs:
             echo "pkg_name=valkey-luajit" >> "$GITHUB_OUTPUT"
           fi
           echo "Version: ${VERSION}"
+          echo "Source commit: ${SOURCE_SHA}"
 
       - name: Build platform matrices
         id: matrix
@@ -84,6 +112,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.process-inputs.outputs.source_sha }}
           submodules: recursive
 
       - name: Create source tarball
@@ -310,6 +339,9 @@ jobs:
     if: ${{ inputs.publish }}
     needs: [process-inputs, build-rpm, build-deb, test-rpm, test-deb]
     runs-on: ubuntu-latest
+    concurrency:
+      group: release-${{ github.repository }}-${{ needs.process-inputs.outputs.version }}
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
@@ -325,10 +357,35 @@ jobs:
           pattern: deb-*
           path: ./dist
 
+      - name: Prepare release assets
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil
+
+          packages = {}
+          for family in ("rpm", "deb"):
+              files = sorted(path for path in Path("dist").glob(f"{family}-*/*.{family}") if path.is_file())
+              if not files:
+                  raise SystemExit(f"No {family.upper()} packages found")
+              for source in files:
+                  name = f"{source.parent.name}--{source.name}" if family == "rpm" else source.name
+                  if name in packages:
+                      raise SystemExit(f"Duplicate release asset {name}: {packages[name]} and {source}")
+                  packages[name] = source
+
+          destination = Path("release-assets")
+          destination.mkdir()
+          for name, source in packages.items():
+              shutil.copy2(source, destination / name)
+          print(f"Staged {len(packages)} release assets")
+          PY
+
       - name: Publish release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ needs.process-inputs.outputs.version }}
+          fail_on_unmatched_files: true
           files: |
-            dist/**/*.rpm
-            dist/**/*.deb
+            release-assets/*.rpm
+            release-assets/*.deb
