@@ -18,6 +18,9 @@
 
 #include <lua.h>
 #include <lauxlib.h>
+#include <pthread.h>
+#include <stdatomic.h>
+#include <time.h>
 #include <lualib.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1518,6 +1521,67 @@ static int server_math_randomseed(lua_State *L) {
     return 0;
 }
 
+#define LUAJIT_WATCHDOG_TICK_MS 5
+
+static pthread_t luajit_wd_thread;
+static int luajit_wd_started = 0;
+static pthread_mutex_t luajit_wd_mutex = PTHREAD_MUTEX_INITIALIZER;
+static lua_State *luajit_wd_target;
+static long long luajit_wd_arm_at_ms;
+static atomic_int luajit_wd_stop;
+static atomic_llong luajit_busy_threshold_ms;
+
+static void luajitMaskCountHook(lua_State *lua, lua_Debug *ar);
+
+static long long luajitNowMs(void) {
+    return (long long)(getMonotonicUs() / 1000);
+}
+
+static void *luajitWatchdogMain(void *arg) {
+    VALKEYMODULE_NOT_USED(arg);
+    while (!atomic_load(&luajit_wd_stop)) {
+        struct timespec ts = {0, LUAJIT_WATCHDOG_TICK_MS * 1000 * 1000};
+        nanosleep(&ts, NULL);
+
+        pthread_mutex_lock(&luajit_wd_mutex);
+        if (luajit_wd_target != NULL && luajitNowMs() >= luajit_wd_arm_at_ms) {
+            lua_sethook(luajit_wd_target, luajitMaskCountHook, LUA_MASKCOUNT, LUA_HOOK_CHECK_INTERVAL);
+            luajit_wd_target = NULL;
+        }
+        pthread_mutex_unlock(&luajit_wd_mutex);
+    }
+    return NULL;
+}
+
+void luajitWatchdogStart(void) {
+    if (luajit_wd_started) return;
+    atomic_store(&luajit_wd_stop, 0);
+    pthread_mutex_lock(&luajit_wd_mutex);
+    luajit_wd_target = NULL;
+    pthread_mutex_unlock(&luajit_wd_mutex);
+    if (pthread_create(&luajit_wd_thread, NULL, luajitWatchdogMain, NULL) == 0) {
+        luajit_wd_started = 1;
+    } else {
+        ValkeyModule_Log(NULL, "warning",
+                         "LuaJIT: could not start the script-kill watchdog; "
+                         "falling back to a hook on every invocation");
+    }
+}
+
+void luajitWatchdogStop(void) {
+    if (!luajit_wd_started) return;
+    atomic_store(&luajit_wd_stop, 1);
+    pthread_join(luajit_wd_thread, NULL);
+    pthread_mutex_lock(&luajit_wd_mutex);
+    luajit_wd_target = NULL;
+    pthread_mutex_unlock(&luajit_wd_mutex);
+    luajit_wd_started = 0;
+}
+
+void luajitWatchdogSetBusyThreshold(long long ms) {
+    atomic_store(&luajit_busy_threshold_ms, ms < 0 ? 0 : ms);
+}
+
 static void luajitMaskCountHook(lua_State *lua, lua_Debug *ar) {
     VALKEYMODULE_NOT_USED(ar);
 
@@ -1607,7 +1671,18 @@ void luajitCallFunction(ValkeyModuleCtx *ctx,
 
     luajitSaveOnRegistry(lua, REGISTRY_RUN_CTX_NAME, &call_ctx);
 
-    lua_sethook(lua, luajitMaskCountHook, LUA_MASKCOUNT, LUA_HOOK_CHECK_INTERVAL);
+    long long busy_ms = atomic_load(&luajit_busy_threshold_ms);
+    int watched = 0;
+    if (busy_ms > 0 && luajit_wd_started) {
+        long long now_ms = luajitNowMs();
+        pthread_mutex_lock(&luajit_wd_mutex);
+        luajit_wd_arm_at_ms = busy_ms > LLONG_MAX - now_ms ? LLONG_MAX : now_ms + busy_ms;
+        luajit_wd_target = lua;
+        pthread_mutex_unlock(&luajit_wd_mutex);
+        watched = 1;
+    } else {
+        lua_sethook(lua, luajitMaskCountHook, LUA_MASKCOUNT, LUA_HOOK_CHECK_INTERVAL);
+    }
     delhook = 1;
 
     luajitCreateArray(lua, keys, nkeys);
@@ -1692,7 +1767,12 @@ void luajitCallFunction(ValkeyModuleCtx *ctx,
         luajitReplyToServerReply(ctx, call_ctx.resp, lua);
     }
 
+    if (watched) {
+        pthread_mutex_lock(&luajit_wd_mutex);
+        luajit_wd_target = NULL;
+    }
     if (delhook) lua_sethook(lua, NULL, 0, 0);
+    if (watched) pthread_mutex_unlock(&luajit_wd_mutex);
 
     luajitSaveOnRegistry(lua, REGISTRY_RUN_CTX_NAME, NULL);
 }
