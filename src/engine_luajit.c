@@ -925,7 +925,8 @@ int ValkeyModule_OnLoad(ValkeyModuleCtx *ctx,
     }
 
     ValkeyModule_SetModuleOptions(ctx, VALKEYMODULE_OPTIONS_HANDLE_REPL_ASYNC_LOAD |
-                                           VALKEYMODULE_OPTIONS_HANDLE_ATOMIC_SLOT_MIGRATION);
+                                           VALKEYMODULE_OPTIONS_HANDLE_ATOMIC_SLOT_MIGRATION |
+                                           VALKEYMODULE_OPTIONS_HANDLE_FORKLESS);
 
     if (ValkeyModule_RegisterBoolConfig(ctx,
                                         "enable-ffi-api",
